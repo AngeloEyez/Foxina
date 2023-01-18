@@ -1,6 +1,5 @@
-# Foxina
- ![](https://github.com/AngeloEyez/Foxina/raw/main/img/Foxina.png)
- Foxina 可協助於 富學寶典 網站 自動學習、考試
+# Foxina ![Foxina](https://github.com/AngeloEyez/Foxina/raw/main/img/Foxina.png)
+Foxina 可協助於 富學寶典 網站 自動學習、考試
 
 安裝：
 1. 執行 [FoxinaEnable.reg](https://github.com/AngeloEyez/Foxina/raw/main/FoxinaEnable.reg)
