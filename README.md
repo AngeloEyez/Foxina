@@ -1,4 +1,5 @@
 # Foxina
+ ![](https://github.com/AngeloEyez/Foxina/raw/main/img/Foxina.png =250x250)
  Foxina 可協助於 富學寶典 網站 自動學習、考試
 
 安裝：
