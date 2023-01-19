@@ -1,6 +1,3 @@
-src
-src-bex
-
 .DS_Store
 .thumbs.db
 node_modules
@@ -18,10 +15,6 @@ node_modules
 # Capacitor related directories and files
 /src-capacitor/www
 /src-capacitor/node_modules
-
-# BEX related directories and files
-/src-bex/www
-/src-bex/js/core
 
 # Log files
 npm-debug.log*
