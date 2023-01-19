@@ -2,6 +2,8 @@
 
 # Foxina
 Foxina 可協助於 富學寶典 網站 自動學習、考試
+- 課程影片可自動撥放, 離開視窗不會暫停
+- 協助考試
 
 安裝：
 1. 執行 [FoxinaEnable.reg](https://github.com/AngeloEyez/Foxina/raw/main/FoxinaEnable.reg)
