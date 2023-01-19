@@ -1,6 +1,8 @@
 .DS_Store
 .thumbs.db
 node_modules
+src
+src-bex
 
 # Quasar core related directories
 .quasar
