@@ -6,7 +6,7 @@ src-bex
 
 # Quasar core related directories
 .quasar
-/dist
+/dist/bex
 
 # Cordova related directories and files
 /src-cordova/node_modules
@@ -29,3 +29,7 @@ yarn-error.log*
 *.ntvs*
 *.njsproj
 *.sln
+
+*.pem
+*.pptx
+*.ppt
