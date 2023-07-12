@@ -85,7 +85,22 @@ module.exports = configure(function (/* ctx */) {
 
         // https://v2.quasar.dev/quasar-cli-vite/quasar-config-js#framework
         framework: {
-            config: {},
+            config: {
+                // Form theme builder https://quasar.dev/style/theme-builder/ (Quasar CLI)
+                brand: {
+                    primary: '#ff7043',
+                    secondary: '#8ea626',
+                    accent: '#a25cb5',
+
+                    dark: '#333232',
+                    'dark-page': '#121212',
+
+                    positive: '#69c983',
+                    negative: '#bf3444',
+                    info: '#62c5d9',
+                    warning: '#f2cb5e'
+                }
+            },
 
             // iconSet: 'material-icons', // Quasar icon set
             // lang: 'en-US', // Quasar language pack
@@ -191,7 +206,7 @@ module.exports = configure(function (/* ctx */) {
 
         // Full list of options: https://v2.quasar.dev/quasar-cli-vite/developing-browser-extensions/configuring-bex
         bex: {
-            contentScripts: ['my-content-script', 'ieduFillAns', 'ieduGetAns', 'playCourse']
+            contentScripts: ['my-content-script', 'ieduFillAns', 'ieduGetAns', 'playCourse', 'eLearning', 'eLearning-inj', 'my-content-script-inj']
 
             // extendBexScriptsConf (esbuildConf) {}
             // extendBexManifestJson (json) {}
