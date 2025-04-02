@@ -1,9 +1,7 @@
 .DS_Store
 .thumbs.db
 node_modules
-public
-src
-src-bex
+
 
 # Quasar core related directories
 .quasar
@@ -31,7 +29,3 @@ yarn-error.log*
 *.njsproj
 *.sln
 
-*.pem
-*.pptx
-*.ppt
-*.7z
