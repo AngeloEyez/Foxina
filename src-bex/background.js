@@ -1,5 +1,6 @@
 import { bexBackground } from 'quasar/wrappers';
 
+
 console.log('========================= Background Page Start ==============================');
 
 // chrome.runtime.onInstalled.addListener(() => {
