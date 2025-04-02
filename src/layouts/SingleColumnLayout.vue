@@ -3,7 +3,7 @@
         <q-layout view="hHh lpR fff" container-class="optionStyle">
             <q-header elevated class="bg-primary text-white">
                 <q-bar>
-                    <img alt="Foxina logo" src="~assets/quasar-logo-vertical.svg" style="width: 24px; height: 24px" />
+                    <img alt="Foxina logo" @dblclick="navigateToIndex" src="~assets/quasar-logo-vertical.svg" style="width: 24px; height: 24px" />
                     <q-toolbar-title>{{ appDescription }}</q-toolbar-title>
                     <div>{{ appVersion }}</div>
                 </q-bar>
@@ -26,8 +26,20 @@
 <script setup>
 import { ref, reactive, inject } from 'vue';
 import { version, description } from '../../package.json';
+import { useRouter } from 'vue-router';
+
+const router = useRouter();
 const appVersion = version;
 const appDescription = description;
+
+// 雙擊Foxina logo時在瀏覽器新窗口打開IndexPage
+const navigateToIndex = () => {
+    console.log('double click');
+    // 使用chrome.tabs.create在瀏覽器窗口打開首頁
+    chrome.tabs.create({
+        url: chrome.runtime.getURL('www/index.html')
+    });
+};
 </script>
 
 <style scoped>
