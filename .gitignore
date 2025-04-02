@@ -29,3 +29,11 @@ yarn-error.log*
 *.njsproj
 *.sln
 
+# Foxina
+public
+src
+src-bex
+*.pem
+*.pptx
+*.ppt
+*.7z
