@@ -258,6 +258,34 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             break;
         }
 
+        case 'deleteLocalDoc': {
+            console.log(`[deleteLocalDoc] 刪除本地文檔: ${request.id}`);
+            db.remove(request.id, request.rev)
+                .then(function (response) {
+                    console.log(`[deleteLocalDoc] 刪除成功`, response);
+                    sendResponse(response);
+                })
+                .catch(function (error) {
+                    console.log(`[deleteLocalDoc] 刪除失敗`, error);
+                    sendResponse({ error: error.message || '刪除失敗' });
+                });
+            break;
+        }
+
+        case 'deleteRemoteDoc': {
+            console.log(`[deleteRemoteDoc] 刪除遠端文檔: ${request.id}`);
+            rdb.remove(request.id, request.rev)
+                .then(function (response) {
+                    console.log(`[deleteRemoteDoc] 刪除成功`, response);
+                    sendResponse(response);
+                })
+                .catch(function (error) {
+                    console.log(`[deleteRemoteDoc] 刪除失敗`, error);
+                    sendResponse({ error: error.message || '刪除失敗' });
+                });
+            break;
+        }
+
         default: {
             //var key = await getKey();
             break;
@@ -269,8 +297,19 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
 
 // 廣播同步狀態給所有頁面
 function broadcastSyncStatus(status) {
-    // 同步狀態更新後通知所有頁面
-    chrome.runtime.sendMessage({ type: 'syncStatus', status: status });
+    // 使用try-catch來處理可能的通信錯誤
+    try {
+        // 使用runtime.lastError檢查是否有接收端存在的問題
+        chrome.runtime.sendMessage({ type: 'syncStatus', status: status }, response => {
+            if (chrome.runtime.lastError) {
+                console.log('[broadcastSyncStatus] 通信錯誤:', chrome.runtime.lastError.message);
+                // 錯誤被捕獲，但我們不中斷程序
+            }
+        });
+    } catch (error) {
+        console.log('[broadcastSyncStatus] 發送消息時出現異常:', error);
+        // 錯誤被捕獲，但我們不中斷程序
+    }
 }
 
 function syncdb() {

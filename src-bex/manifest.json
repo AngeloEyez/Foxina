@@ -27,7 +27,7 @@
             "js": ["ieduFillAns.js"]
         },
         {
-            "matches": ["*://iedu.foxconn.com/*/submitExam*"],
+            "matches": ["*://iedu.foxconn.com/*/submitExam*", "*://iedu.foxconn.com/*/submitExamTask"],
             "js": ["ieduGetAns.js"]
         },
         {

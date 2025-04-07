@@ -29,10 +29,10 @@ let Q = {};
 $('div.question_warp').each(function (index, val) {
     let qTitle = $(this).find('h3').text();
     qTitle = qTitle.substring(qTitle.indexOf('. ', 0) + 2);
-    //console.log(index + ": " + qTitle );
+    //console.log(index + ': ' + qTitle);
 
     let ans = $(this).find('p.answer > strong:first').text();
-    //console.log("ans:" + ans);
+    //console.log('ans:' + ans);
 
     let answers = [];
     // 判斷題型
