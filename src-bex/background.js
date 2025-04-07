@@ -1,6 +1,5 @@
 import { bexBackground } from 'quasar/wrappers';
 
-
 console.log('========================= Background Page Start ==============================');
 
 // chrome.runtime.onInstalled.addListener(() => {
@@ -98,11 +97,71 @@ const _REMOTEDB = "http://fxn:Youcan'tgetthepassword!@218.35.162.28:5984/fxn_ied
 
 let db = new PouchDB(_LOCALDB);
 let rdb = new PouchDB(_REMOTEDB);
+let lastSyncTime = null;
 
 pushDB();
 
 chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
     switch (request.action) {
+        case 'triggerSync': {
+            console.log('[triggerSync] 手動觸發同步');
+            // 通知UI同步已開始
+            broadcastSyncStatus('syncing');
+
+            // 執行同步
+            try {
+                syncdb()
+                    .then(() => {
+                        console.log('[triggerSync] 同步完成');
+                        lastSyncTime = Date.now();
+                        broadcastSyncStatus('completed');
+                        sendResponse({ success: true });
+                    })
+                    .catch(err => {
+                        console.log('[triggerSync] 同步錯誤', err);
+                        broadcastSyncStatus('error');
+                        sendResponse({ error: err });
+                    });
+            } catch (error) {
+                console.error('[triggerSync] 同步過程發生異常', error);
+                broadcastSyncStatus('error');
+                sendResponse({ error: error });
+            }
+            break;
+        }
+
+        case 'getLastSyncTime': {
+            console.log('[getLastSyncTime] 獲取上次同步時間');
+            sendResponse({ time: lastSyncTime });
+            break;
+        }
+
+        case 'getAllLocalDocs': {
+            console.log(`[getAllLocalDocs] 獲取所有本地數據`);
+            db.allDocs({ include_docs: true })
+                .then(function (result) {
+                    sendResponse(result);
+                })
+                .catch(function (err) {
+                    console.log(err);
+                    sendResponse({ error: err });
+                });
+            break;
+        }
+
+        case 'getAllRemoteDocs': {
+            console.log(`[getAllRemoteDocs] 獲取所有遠端數據`);
+            rdb.allDocs({ include_docs: true })
+                .then(function (result) {
+                    sendResponse(result);
+                })
+                .catch(function (err) {
+                    console.log(err);
+                    sendResponse({ error: err });
+                });
+            break;
+        }
+
         case 'getCourse': {
             console.log(`[getCourse]Getting doc from db: ${request.title}`);
             rdb.get(request.title)
@@ -208,33 +267,44 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
     return true;
 });
 
+// 廣播同步狀態給所有頁面
+function broadcastSyncStatus(status) {
+    // 同步狀態更新後通知所有頁面
+    chrome.runtime.sendMessage({ type: 'syncStatus', status: status });
+}
+
 function syncdb() {
     console.log(`Start sync...`);
-    var sync = PouchDB.sync('fxn_iedu', "http://fxn:Youcan'tgetthepassword!@218.35.162.28:5984/fxn_iedu")
-        .on('change', function (info) {
-            //console.log('sync: change detected.');
-            //console.log(info);
-        })
-        .on('paused', function (err) {
-            //console.log('sync: paused detected.');
-            //console.log(err);
-        })
-        .on('active', function () {
-            //console.log('sync: active detected.');
-            //console.log('active');
-        })
-        .on('denied', function (err) {
-            console.log('Start sync... denied.');
-            console.log(err);
-        })
-        .on('complete', function (info) {
-            console.log('Start sync... completed.');
-            //console.log(info);
-        })
-        .on('error', function (err) {
-            console.log("Start sync... error or can't connect!");
-            console.log(err);
-        });
+    return new Promise((resolve, reject) => {
+        var sync = PouchDB.sync('fxn_iedu', "http://fxn:Youcan'tgetthepassword!@218.35.162.28:5984/fxn_iedu")
+            .on('change', function (info) {
+                //console.log('sync: change detected.');
+                //console.log(info);
+            })
+            .on('paused', function (err) {
+                //console.log('sync: paused detected.');
+                //console.log(err);
+            })
+            .on('active', function () {
+                //console.log('sync: active detected.');
+                //console.log('active');
+            })
+            .on('denied', function (err) {
+                console.log('Start sync... denied.');
+                console.log(err);
+                reject(err);
+            })
+            .on('complete', function (info) {
+                console.log('Start sync... completed.');
+                //console.log(info);
+                resolve(info);
+            })
+            .on('error', function (err) {
+                console.log("Start sync... error or can't connect!");
+                console.log(err);
+                reject(err);
+            });
+    });
 }
 
 //
@@ -286,7 +356,11 @@ function mergeDoc(doc, upd) {
 // Push local DB to remote and clear local data
 //
 function pushDB() {
-    db.allDocs({ include_docs: true })
+    // 通知UI同步開始
+    broadcastSyncStatus('syncing');
+
+    return db
+        .allDocs({ include_docs: true })
         .then(function (res) {
             // Collect _id array from local db.
             let keys = [];
@@ -294,12 +368,16 @@ function pushDB() {
                 keys.push(r.doc._id);
             });
             if (keys.length == 0) {
+                // 沒有數據需要同步，直接視為完成
+                lastSyncTime = Date.now();
+                broadcastSyncStatus('completed');
                 return;
             } // Local db is empty.
             //console.log(keys);
 
             // bulck get remote db data by collected _id array.
-            rdb.allDocs({ include_docs: true, keys: keys })
+            return rdb
+                .allDocs({ include_docs: true, keys: keys })
                 .then(rres => {
                     let mDocs = []; // new docs array to be pushed to remote db.
 
@@ -319,25 +397,40 @@ function pushDB() {
                     // Update mDocs to remote db and clean up local db.
                     if (mDocs.length > 0) {
                         console.log(mDocs);
-                        rdb.bulkDocs(mDocs)
+                        return rdb
+                            .bulkDocs(mDocs)
                             .then(r => {
                                 console.log('[pushDB():rdb.bulkDocs] Update remote db successfully.');
-                                resetLocalDb();
+                                return resetLocalDb().then(() => {
+                                    // 更新同步完成時間並通知UI
+                                    lastSyncTime = Date.now();
+                                    broadcastSyncStatus('completed');
+                                });
                             })
                             .catch(e => {
                                 console.log('[pushDB():rdb.bulkDocs] Update remote db error!');
                                 console.log(e);
+                                broadcastSyncStatus('error');
+                                throw e;
                             });
                     } else {
-                        resetLocalDb();
+                        return resetLocalDb().then(() => {
+                            // 更新同步完成時間並通知UI
+                            lastSyncTime = Date.now();
+                            broadcastSyncStatus('completed');
+                        });
                     }
                 })
                 .catch(err => {
                     console.log(err);
+                    broadcastSyncStatus('error');
+                    throw err;
                 });
         })
         .catch(function (err) {
             console.log(err);
+            broadcastSyncStatus('error');
+            throw err;
         });
 }
 
@@ -346,14 +439,17 @@ function pushDB() {
 // Destroy and re-initialize local db
 //
 function resetLocalDb() {
-    db.destroy()
+    return db
+        .destroy()
         .then(function (response) {
             db = new PouchDB(_LOCALDB);
             console.log('[resetLocalDb()] Local db re-initialized.');
+            return Promise.resolve();
         })
         .catch(e => {
             console.log('[resetLocalDb()] Delete local db FAIL:');
             console.log(e);
+            return Promise.reject(e);
         });
 }
 
