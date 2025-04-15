@@ -101,11 +101,11 @@
                                         {{ props.row.timestamp ? new Date(props.row.timestamp).toLocaleString() : new Date('2020-01-01').toLocaleString() }}
                                     </q-td>
                                     <!-- 操作 -->
-                                    <q-td auto-width>
+                                    <!-- <q-td auto-width>
                                         <q-btn size="sm" flat round color="negative" icon="delete" @click.stop="confirmDelete(props.row, 'remote')">
                                             <q-tooltip>刪除</q-tooltip>
                                         </q-btn>
-                                    </q-td>
+                                    </q-td> -->
                                 </q-tr>
                             </template>
                         </q-table>
@@ -343,13 +343,27 @@ const columns = [
         label: '更新日期',
         field: row => {
             if (row.timestamp) {
-                return new Date(row.timestamp).toLocaleString();
+                return row.timestamp; //new Date(row.timestamp).toLocaleString();
             } else {
-                return new Date('2020-01-01').toLocaleString();
+                return 0; //new Date('2020-01-01').toLocaleString();
             }
         },
         sortable: true,
         style: 'width: 140px'
+        // sort: (a, b, rowA, rowB) => {
+        //     // 獲取原始的 timestamp 值，如果不存在則給一個極小值 (或極大值，取決於排序需求)
+        //     // 這裡使用 getTime() 轉為數字進行比較
+        //     const dateA = rowA.timestamp ? new Date(rowA.timestamp).getTime() : 0; // 0 代表最早
+        //     const dateB = rowB.timestamp ? new Date(rowB.timestamp).getTime() : 0;
+
+        //     // 比較數字大小
+        //     // a - b 是升冪 (舊到新)
+        //     // b - a 是降冪 (新到舊)
+        //     // 因為 pagination 已設 descending: true, Quasar 會自動處理方向
+        //     // 所以這裡提供基礎的升冪比較即可，或者直接提供降冪比較
+        //     // 為了清晰，我們直接返回降冪比較的結果
+        //     return dateB - dateA;
+        // }
     }
 ];
 
