@@ -33,6 +33,7 @@ yarn-error.log*
 public
 src
 src-bex
+docs
 *.pem
 *.pptx
 *.ppt
