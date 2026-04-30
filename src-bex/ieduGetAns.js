@@ -57,6 +57,22 @@ $('div.question_warp').each(function (index, val) {
 //console.log(Q);
 
 (async () => {
+    // --- 新增功能：檢查分數並決定是否使用暫存答案 ---
+    let scoreText = $('.score_text').text();
+    let scoreMatch = scoreText.match(/\d+/);
+    let score = scoreMatch ? parseInt(scoreMatch[0]) : 0;
+
+    console.log(`[ieduGetAns] 偵測到分數: ${score}`);
+
+    if (score === 100) {
+        // 讀取暫存答案
+        let storage = await chrome.storage.local.get('iedu_temp_answers');
+        if (storage.iedu_temp_answers) {
+            console.log('[ieduGetAns] 分數滿分，直接使用暫存答案儲存。');
+            Q = storage.iedu_temp_answers;
+        }
+    }
+
     const response = await chrome.runtime.sendMessage({
         action: 'putCourse',
         doc: {
@@ -66,7 +82,10 @@ $('div.question_warp').each(function (index, val) {
         }
     });
 
-    //console.log(response);
+    console.log('[ieduGetAns] 答案已存入資料庫:', response);
+
+    // 清除暫存
+    chrome.storage.local.remove('iedu_temp_answers');
 })();
 
 // // 儲存到 local storage
