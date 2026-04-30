@@ -139,6 +139,22 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             break;
         }
 
+        case 'triggerPushDB': {
+            console.log('[triggerPushDB] UI 手動觸發精確同步 (pushDB)...');
+            broadcastSyncStatus('syncing');
+
+            pushDB()
+                .then(() => {
+                    console.log('[triggerPushDB] pushDB 完成');
+                    sendResponse({ success: true });
+                })
+                .catch(err => {
+                    console.error('[triggerPushDB] pushDB 失敗', err);
+                    sendResponse({ error: String(err) });
+                });
+            break;
+        }
+
         case 'getAllLocalDocs': {
             console.log(`[getAllLocalDocs] 獲取所有本地數據`);
             db.allDocs({ include_docs: true })

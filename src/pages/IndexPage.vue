@@ -21,16 +21,21 @@
             <div class="col-12 col-md-6">
                 <q-card>
                     <q-card-section class="q-py-sm">
-                        <div class="row items-center">
-                            <div class="text-h6">本地資料庫 ({{ localData.length }}筆資料)</div>
+                        <div class="row items-center no-wrap">
+                            <div class="text-h6 text-no-wrap">本地資料庫 ({{ localData.length }}筆資料)</div>
                             <q-space />
-                            <q-btn flat round size="sm" icon="refresh" @click="fetchLocalData" :loading="localLoading">
+                            <q-input v-model="localFilter" dense outlined clearable placeholder="搜尋課程..." class="q-ml-md" style="max-width: 200px">
+                                <template v-slot:append>
+                                    <q-icon name="search" />
+                                </template>
+                            </q-input>
+                            <q-btn flat round size="sm" icon="refresh" @click="fetchLocalData" :loading="localLoading" class="q-ml-xs">
                                 <q-tooltip>刷新本地資料</q-tooltip>
                             </q-btn>
                         </div>
                     </q-card-section>
                     <q-card-section class="q-pa-none">
-                        <q-table :rows="localData" :columns="columns" row-key="_id" :loading="localLoading" v-model:pagination="localPagination" dense>
+                        <q-table :rows="localData" :columns="columns" row-key="_id" :loading="localLoading" v-model:pagination="localPagination" :filter="localFilter" dense>
                             <template v-slot:loading>
                                 <q-inner-loading showing color="primary" />
                             </template>
@@ -69,16 +74,21 @@
             <div class="col-12 col-md-6">
                 <q-card>
                     <q-card-section class="q-py-sm">
-                        <div class="row items-center">
-                            <div class="text-h6">遠端資料庫 ({{ remoteData.length }}筆資料)</div>
+                        <div class="row items-center no-wrap">
+                            <div class="text-h6 text-no-wrap">遠端資料庫 ({{ remoteData.length }}筆資料)</div>
                             <q-space />
-                            <q-btn flat round size="sm" icon="refresh" @click="fetchRemoteData" :loading="remoteLoading">
+                            <q-input v-model="remoteFilter" dense outlined clearable placeholder="搜尋課程..." class="q-ml-md" style="max-width: 200px">
+                                <template v-slot:append>
+                                    <q-icon name="search" />
+                                </template>
+                            </q-input>
+                            <q-btn flat round size="sm" icon="refresh" @click="fetchRemoteData" :loading="remoteLoading" class="q-ml-xs">
                                 <q-tooltip>刷新遠端資料</q-tooltip>
                             </q-btn>
                         </div>
                     </q-card-section>
                     <q-card-section class="q-pa-none">
-                        <q-table :rows="remoteData" :columns="columns" row-key="_id" :loading="remoteLoading" v-model:pagination="remotePagination" dense>
+                        <q-table :rows="remoteData" :columns="columns" row-key="_id" :loading="remoteLoading" v-model:pagination="remotePagination" :filter="remoteFilter" dense>
                             <template v-slot:loading>
                                 <q-inner-loading showing color="primary" />
                             </template>
@@ -173,6 +183,8 @@ const localData = ref([]);
 const remoteData = ref([]);
 const localLoading = ref(true);
 const remoteLoading = ref(true);
+const localFilter = ref('');
+const remoteFilter = ref('');
 const isSyncing = ref(false);
 const syncStatus = ref('idle'); // 'idle', 'syncing', 'error', 'completed'
 const lastSyncTime = ref(null);
@@ -221,12 +233,12 @@ const syncStatusColor = computed(() => {
 const localPagination = ref({
     sortBy: 'timestamp',
     descending: true,
-    rowsPerPage: 10
+    rowsPerPage: 20
 });
 const remotePagination = ref({
     sortBy: 'timestamp',
     descending: true,
-    rowsPerPage: 10
+    rowsPerPage: 20
 });
 
 // 處理課程詳細資訊
@@ -465,17 +477,34 @@ onUnmounted(() => {
     }
 });
 
-// 觸發同步
+/**
+ * triggerSync
+ * 同步按鈕點擊處理函式。
+ * 改為呼叫 background.js 中的 pushDB() 精確比對與刪除流程。
+ */
 const triggerSync = () => {
     isSyncing.value = true;
     syncStatus.value = 'syncing';
 
-    chrome.runtime.sendMessage({ action: 'triggerSync' }, response => {
-        // 背景腳本會透過 onMessage 事件通知同步狀態
+    chrome.runtime.sendMessage({ action: 'triggerPushDB' }, response => {
+        if (chrome.runtime.lastError) {
+            console.error('[triggerSync] 發送訊息失敗:', chrome.runtime.lastError.message);
+            syncStatus.value = 'error';
+            isSyncing.value = false;
+            $q.notify({ color: 'negative', message: '發送同步指令失敗', icon: 'error' });
+            return;
+        }
         if (response && response.error) {
+            // 拋除過老同步鎖定的情況
+            if (response.error.includes('尚未完成')) {
+                $q.notify({ color: 'warning', message: '同步中，請稍候再試', icon: 'hourglass_top' });
+            } else {
+                $q.notify({ color: 'negative', message: `同步失敗: ${response.error}`, icon: 'error' });
+            }
             syncStatus.value = 'error';
             isSyncing.value = false;
         }
+        // 成功的結果會由 background 透過 broadcastSyncStatus 通知
     });
 };
 
