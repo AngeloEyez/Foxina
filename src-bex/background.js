@@ -278,6 +278,8 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                     if (qCount === 0) {
                         console.warn(`[getCourse] ⚠️ 遠端課程存在但 Q 欄位為空，無法填答。`);
                     }
+                    // 記錄此次題庫查詢（下載）到工號統計
+                    if (doc.creatorId) updateEmpStats(doc.creatorId, 'download');
                     sendResponse(doc);
                 })
                 .catch(function (remoteErr) {
@@ -293,6 +295,8 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                             if (qCount === 0) {
                                 console.warn(`[getCourse] ⚠️ 本地課程存在但 Q 欄位為空，無法填答。`);
                             }
+                            // 記錄此次題庫查詢（下載）到工號統計
+                            if (doc.creatorId) updateEmpStats(doc.creatorId, 'download');
                             sendResponse(doc);
                         })
                         .catch(e => {
@@ -322,8 +326,8 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                             .then(res => {
                                 console.log(`本地更新 ${cnt} 個資料成功: ${doc._id}`);
                                 pushDB();
-                                // 更新工號使用統計
-                                if (upd.creatorId) updateEmpStats(upd.creatorId);
+                                // 有實際更新題庫內容 → 計入上傳次數
+                                if (upd.creatorId) updateEmpStats(upd.creatorId, 'upload');
                                 sendResponse({ msg: `本地更新 ${cnt} 個資料成功: ${doc._id}` });
                             })
                             .catch(err => {
@@ -333,8 +337,8 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                             });
                     } else {
                         console.log('本地資料不須更新');
-                        // 即使資料不須更新，也要更新工號使用統計（記錄此次查詢）
-                        if (upd.creatorId) updateEmpStats(upd.creatorId);
+                        // 題庫內容完全相同，不計為有效上傳，僅累加總次數
+                        if (upd.creatorId) updateEmpStats(upd.creatorId, 'any');
                         sendResponse({ msg: `本地資料不須更新: ${doc._id}` });
                     }
                 })
@@ -348,8 +352,8 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                                 if (upd.Q != undefined) {
                                     pushDB();
                                 }
-                                // 更新工號使用統計
-                                if (upd.creatorId) updateEmpStats(upd.creatorId);
+                                // 全新課程成功新增 → 計入上傳次數
+                                if (upd.creatorId) updateEmpStats(upd.creatorId, 'upload');
                                 sendResponse({ msg: `本地課程新增成功: ${upd._id}` });
                             })
                             .catch(err => {
@@ -853,22 +857,27 @@ function resetLocalDb() {
 /**
  * updateEmpStats
  * 更新工號使用統計文件 (meta_empStats)。
- * 每次呼叫時，指定工號的 count +1 並更新 lastUsed 時間戳。
+ * 每次呼叫時，指定工號的 count +1、更新 lastUsed 時間戳，
+ * 並依據 type 參數分別累加 uploads 或 downloads 計數。
  * 統計文件同時寫入本地及遠端 DB。
  * 注意：CouchDB 不允許自訂文件 ID 以底線開頭，故使用 meta_ 而非 _meta_。
  * @param {string} empId - 使用者工號
+ * @param {'upload'|'download'|'any'} [type='any'] - 統計類型：
+ *   - 'upload'   → 成功寫入/新增題庫（putCourse 有變更時）
+ *   - 'download' → 成功查詢課程題庫（getCourse 回傳時）
+ *   - 'any'      → 僅累加 count，不計入 upload/download（如重複上傳無變更）
  * @returns {void}
  */
-function updateEmpStats(empId) {
+function updateEmpStats(empId, type = 'any') {
     if (!empId) return;
 
-    console.log(`[updateEmpStats] 更新工號統計: ${empId}`);
+    console.log(`[updateEmpStats] 更新工號統計: ${empId} | 類型: ${type}`);
 
     const now = new Date().toISOString();
 
     /**
      * 執行統計更新的內部函式。
-     * 先讀取現有文件，更新後再寫回。
+     * 先讀取現有文件，依 type 更新對應欄位後寫回。
      * @param {PouchDB.Database} targetDb - 要更新的資料庫實例 (本地或遠端)
      * @param {string} dbName - 資料庫名稱，僅用於日誌輸出
      * @returns {Promise<void>}
@@ -878,25 +887,35 @@ function updateEmpStats(empId) {
             .then(doc => {
                 if (!doc.stats) doc.stats = {};
                 if (!doc.stats[empId]) {
-                    doc.stats[empId] = { count: 0, lastUsed: now };
+                    // 初始化新工號的統計結構，包含 uploads / downloads
+                    doc.stats[empId] = { count: 0, uploads: 0, downloads: 0, lastUsed: now };
                 }
-                doc.stats[empId].count++;
-                doc.stats[empId].lastUsed = now;
+                const entry = doc.stats[empId];
+                // 確保舊資料也有 uploads / downloads 欄位（向下相容）
+                if (entry.uploads === undefined) entry.uploads = 0;
+                if (entry.downloads === undefined) entry.downloads = 0;
+
+                entry.count++;
+                entry.lastUsed = now;
+                if (type === 'upload') entry.uploads++;
+                else if (type === 'download') entry.downloads++;
+
                 return targetDb.put(doc);
             })
             .catch(err => {
                 if (err.status === 404) {
                     // 文件不存在，建立新的統計文件
+                    const initEntry = { count: 1, uploads: 0, downloads: 0, lastUsed: now };
+                    if (type === 'upload') initEntry.uploads = 1;
+                    else if (type === 'download') initEntry.downloads = 1;
                     return targetDb.put({
                         _id: 'meta_empStats',
-                        stats: {
-                            [empId]: { count: 1, lastUsed: now }
-                        }
+                        stats: { [empId]: initEntry }
                     });
                 }
                 throw err;
             })
-            .then(() => console.log(`[updateEmpStats] ${dbName} 統計已更新: ${empId}`))
+            .then(() => console.log(`[updateEmpStats] ${dbName} 統計已更新: ${empId} (${type})`))
             .catch(e => console.error(`[updateEmpStats] ${dbName} 統計更新失敗:`, e));
     }
 

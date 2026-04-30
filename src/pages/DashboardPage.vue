@@ -172,7 +172,19 @@
                                         <q-icon name="badge" size="xs" color="teal" class="q-mr-xs" />
                                         <strong>{{ props.row.empId }}</strong>
                                     </q-td>
-                                    <!-- 使用次數 -->
+                                    <!-- 上傳次數 -->
+                                    <q-td key="uploads" :props="props" class="text-center">
+                                        <q-badge color="green" text-color="white">
+                                            <q-icon name="upload" size="xs" class="q-mr-xs" />{{ props.row.uploads }}
+                                        </q-badge>
+                                    </q-td>
+                                    <!-- 下載次數 -->
+                                    <q-td key="downloads" :props="props" class="text-center">
+                                        <q-badge color="blue" text-color="white">
+                                            <q-icon name="download" size="xs" class="q-mr-xs" />{{ props.row.downloads }}
+                                        </q-badge>
+                                    </q-td>
+                                    <!-- 總使用次數 -->
                                     <q-td key="count" :props="props" class="text-center">
                                         <q-badge color="primary" :label="props.row.count + ' 次'" />
                                     </q-td>
@@ -494,12 +506,28 @@ const empStatsColumns = [
         style: 'width: 140px'
     },
     {
-        name: 'count',
+        name: 'uploads',
         align: 'center',
-        label: '使用次數',
-        field: 'count',
+        label: '上傳次數',
+        field: 'uploads',
         sortable: true,
         style: 'width: 100px'
+    },
+    {
+        name: 'downloads',
+        align: 'center',
+        label: '下載次數',
+        field: 'downloads',
+        sortable: true,
+        style: 'width: 100px'
+    },
+    {
+        name: 'count',
+        align: 'center',
+        label: '總次數',
+        field: 'count',
+        sortable: true,
+        style: 'width: 80px'
     },
     {
         name: 'lastUsed',
@@ -532,6 +560,8 @@ const fetchEmpStats = async () => {
         empStatsRows.value = Object.entries(stats).map(([empId, data]) => ({
             empId,
             count: data.count || 0,
+            uploads: data.uploads || 0,
+            downloads: data.downloads || 0,
             lastUsed: data.lastUsed || null
         }));
         console.log(`[Dashboard] 工號統計載入完成，共 ${empStatsRows.value.length} 個工號`);

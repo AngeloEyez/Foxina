@@ -61,44 +61,6 @@ chrome.runtime.sendMessage({ action: 'requestPageBridge' }, response => {
     }
 });
 
-
-// ─── 取得課程 ID 並寫入 DB ────────────────────────────────────────────────
-(async () => {
-    // 在 async 內取得標題，確保 DOM 已載入
-    let exam_title = $('div.exam_title h2').text().trim();
-    console.log(`[ieduFillAns] 課程標題: "${exam_title}"`);
-
-    if (!exam_title) {
-        console.warn('[ieduFillAns] 無法取得考試標題，可能 DOM 尚未就緒，跳過課程 ID 寫入。');
-        return;
-    }
-
-    let courseId = await chrome.runtime.sendMessage({ action: 'getCourseID' });
-    if (courseId == 0) {
-        console.warn("[ieduFillAns] 無法取得 courseID，跳過課程 ID 寫入。");
-    } else {
-        console.log('[ieduFillAns] 取得 CourseID: ' + courseId + '，準備寫入 DB...');
-        
-        // 取得當前工號
-        let storage = await chrome.storage.local.get('foxinaOpt');
-        let creatorId = '';
-        if (storage.foxinaOpt) {
-            creatorId = JSON.parse(storage.foxinaOpt).user?.empId || '';
-        }
-
-        const response = await chrome.runtime.sendMessage({
-            action: 'putCourse',
-            doc: {
-                _id: exam_title,
-                site: 'iedu',
-                courseId: courseId,
-                creatorId: creatorId
-            }
-        });
-        console.log('[ieduFillAns] putCourse 回應:', response?.msg ?? response);
-    }
-})();
-
 // ─── 文字處理輔助函式（與 ieduGetAns.js 保持同步）────────────────────────
 /**
  * 正規化文字：將所有連續空白字元壓縮為單一空格並去頭尾空白。
@@ -130,37 +92,78 @@ function stripOptionPrefix(text) {
     return text;
 }
 
-// ─── 自動填答主流程 ───────────────────────────────────────────────────────
+// ─── 主流程：整合課程 ID 寫入 + 自動填答 ─────────────────────────────────
+// 【重構說明】原本兩個 IIFE 並行執行，導致每次進入考試頁都會無條件呼叫
+//   putCourse，產生無意義的上傳統計與不必要的 DB 寫入。
+//   現改為單一有序流程：
+//     1. 先 getCourse 查詢題庫
+//     2. 依結果決定是否需要 putCourse（只在課程不存在或 courseId 缺失時才呼叫）
+//     3. 再進行自動填答
+//   此改動確保 upload 統計與 DB timestamp 只在真正有新資料寫入時才更新。
 (async () => {
-    // 讀取設定
+    // ── 步驟 0：讀取設定與頁面基本資訊 ──────────────────────────────────
     let storageItems = await chrome.storage.local.get('foxinaOpt');
-    opt = JSON.parse(storageItems.foxinaOpt);
-    if (!opt?.iedu?.fillAns) {
+    opt = storageItems.foxinaOpt ? JSON.parse(storageItems.foxinaOpt) : {};
+    const fillEnabled = !!opt?.iedu?.fillAns;
+    const creatorId = opt?.user?.empId || '';
+
+    let exam_title = $('div.exam_title h2').text().trim();
+    console.log(`[ieduFillAns] 課程標題: "${exam_title}"`);
+
+    if (!exam_title) {
+        console.warn('[ieduFillAns] 無法取得考試標題，可能 DOM 尚未就緒，中止流程。');
+        return;
+    }
+
+    // ── 步驟 1：先查詢 DB 中是否已有此課程的題庫 ─────────────────────────
+    console.log(`[ieduFillAns] 查詢 DB 題庫: "${exam_title}"...`);
+    const COURSE = await chrome.runtime.sendMessage({ action: 'getCourse', title: exam_title });
+    const courseFound = COURSE && !COURSE.error && COURSE.status !== 404;
+
+    // ── 步驟 2：決定是否需要 putCourse ───────────────────────────────────
+    // 只在以下兩種情況才呼叫 putCourse（才有實際意義）：
+    //   A. 課程在 DB 中完全不存在 → 需要建立骨架文件，等 ieduGetAns.js 後續填入題目
+    //   B. 課程存在但 courseId 欄位缺失 → 需要補齊後設資料
+    // 其他情況（課程已存在且 courseId 完整）跳過，避免無意義的寫入與上傳統計。
+    const courseId = await chrome.runtime.sendMessage({ action: 'getCourseID' });
+
+    if (courseId == 0) {
+        console.warn('[ieduFillAns] 無法取得 courseID，跳過後設資料寫入。');
+    } else if (!courseFound) {
+        // 情況 A：課程不存在，建立骨架文件
+        console.log(`[ieduFillAns] 課程不存在於 DB，建立骨架: courseId=${courseId}`);
+        const res = await chrome.runtime.sendMessage({
+            action: 'putCourse',
+            doc: { _id: exam_title, site: 'iedu', courseId: courseId, creatorId: creatorId }
+        });
+        console.log('[ieduFillAns] putCourse（新建骨架）回應:', res?.msg ?? res);
+    } else if (!COURSE.courseId) {
+        // 情況 B：課程存在但 courseId 缺失，補齊後設資料
+        console.log(`[ieduFillAns] 課程存在但缺少 courseId，補寫: courseId=${courseId}`);
+        const res = await chrome.runtime.sendMessage({
+            action: 'putCourse',
+            doc: { _id: exam_title, site: 'iedu', courseId: courseId, creatorId: creatorId }
+        });
+        console.log('[ieduFillAns] putCourse（補寫 courseId）回應:', res?.msg ?? res);
+    } else {
+        // 情況 C：課程完整，無需 putCourse
+        console.log(`[ieduFillAns] 課程資料完整（courseId=${COURSE.courseId}），跳過 putCourse。`);
+    }
+
+    // ── 步驟 3：自動填答（依設定開關決定是否執行）────────────────────────
+    if (!fillEnabled) {
         console.log('[ieduFillAns] fillAns 功能已關閉，跳過自動填答。');
         return;
     }
 
-    // 在 async 內取得標題，確保 DOM 已載入
-    // 【修正】原本在全域層取值，若頁面尚未完全渲染會取到空字串
-    let exam_title = $('div.exam_title h2').text().trim();
-    console.log(`[ieduFillAns] [fillAns] 課程標題: "${exam_title}"`);
-
-    if (!exam_title) {
-        console.warn('[ieduFillAns] [fillAns] 無法取得考試標題，中止自動填答。');
+    if (!courseFound) {
+        console.warn(`[ieduFillAns] [fillAns] ❌ DB 中無題庫，無法自動填答: "${exam_title}"`);
         return;
     }
-
-    console.log(`[ieduFillAns] [fillAns] 向 background 查詢課程題庫: "${exam_title}"...`);
-    const COURSE = await chrome.runtime.sendMessage({ action: 'getCourse', title: exam_title });
 
     // 【修正】原本只判斷 status==404，若遠端/本地均找不到課程，
     //         getCourse 回傳的是 PouchDB 的 error 物件（含 error 屬性），
     //         應改用 COURSE.error 或 COURSE.status 做更全面的判斷。
-    if (!COURSE || COURSE.error || COURSE.status === 404) {
-        console.warn(`[ieduFillAns] [fillAns] ❌ 未找到題庫 (error: ${COURSE?.error ?? 'N/A'}, status: ${COURSE?.status ?? 'N/A'}): "${exam_title}"`);
-        return;
-    }
-
     const qCount = COURSE.Q ? Object.keys(COURSE.Q).length : 0;
     console.log(`[ieduFillAns] [fillAns] ✅ 找到題庫: "${COURSE._id}" | 共 ${qCount} 題`);
 
