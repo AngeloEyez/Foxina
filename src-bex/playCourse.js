@@ -47,17 +47,18 @@ DocumentObserverConfig = {
 
 PlayObserver = new MutationObserver(async function (mutationsList, observer) {
     // 如果影片暫停
-    if (document.getElementsByClassName('vjs-play-control vjs-button')[0].innerText == 'Play') {
+    let $playBtn = $('.vjs-play-control.vjs-button');
+    if ($playBtn.length > 0 && $playBtn.text().includes('Play')) {
         console.log(`Pause Detected (MutationObserver). Starting a video.`);
         await delay(1000);
         PlayNext();
     }
 
     //信息視窗
-    //console.log(document.getElementsByClassName('layui-layer-content'));
-    if (document.getElementsByClassName('layui-layer-content')[0].innerText == '您操作的太频繁了，请休息一下') {
+    let $layerContent = $('.layui-layer-content');
+    if ($layerContent.length > 0 && $layerContent.text().includes('您操作的太频繁了，请休息一下')) {
         console.log('討厭視窗退散!');
-        document.getElementsByClassName('layui-layer-btn0')[0].click();
+        $('.layui-layer-btn0').click();
     }
 });
 
@@ -81,10 +82,10 @@ initTimerId = setInterval(function () {
 // Watch Dog Timer - 5秒 check 一次是否還再撥放
 let playtimeL = '';
 try {
-    playtimeL = document.getElementsByClassName('vjs-remaining-time-display')[0].innerText;
+    playtimeL = $('.vjs-remaining-time-display').text().trim();
 } catch {}
 wtgTimerId = setInterval(function () {
-    let pt = document.getElementsByClassName('vjs-remaining-time-display')[0].innerText;
+    let pt = $('.vjs-remaining-time-display').text().trim();
     if (pt == playtimeL) {
         // 沒撥放
         console.log('Pause detected (WTG). Starting a video.');

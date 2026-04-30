@@ -11,6 +11,18 @@
                 </div>
                 <div v-if="lastSyncTime" class="text-caption">上次同步時間：{{ lastSyncTime.toLocaleString() }}</div>
             </div>
+            <div class="col-auto q-ml-sm">
+                <q-btn
+                    color="warning"
+                    label="清理髒資料"
+                    icon="auto_fix_high"
+                    :loading="isCleaningUp"
+                    :disable="isCleaningUp"
+                    @click="cleanupAnswers"
+                >
+                    <q-tooltip>掃描並修正 DB 中含有 \n\t 換行縮排的舊版答案資料</q-tooltip>
+                </q-btn>
+            </div>
             <div class="col-auto">
                 <q-btn color="primary" label="同步資料" icon="sync" :loading="isSyncing" :disable="isSyncing" @click="triggerSync" />
             </div>
@@ -124,6 +136,64 @@
             </div>
         </div>
 
+        <!-- 工號使用統計 -->
+        <div class="row q-col-gutter-md q-mt-xs">
+            <div class="col-12">
+                <q-card>
+                    <q-card-section class="q-py-sm">
+                        <div class="row items-center no-wrap">
+                            <div class="text-h6 text-no-wrap">
+                                工號統計
+                                <q-badge color="teal" class="q-ml-sm">共 {{ empStatsRows.length }} 個工號</q-badge>
+                            </div>
+                            <q-space />
+                            <q-btn flat round size="sm" icon="refresh" @click="fetchEmpStats" :loading="empStatsLoading" class="q-ml-xs">
+                                <q-tooltip>刷新工號統計</q-tooltip>
+                            </q-btn>
+                        </div>
+                    </q-card-section>
+                    <q-card-section class="q-pa-none">
+                        <q-table
+                            :rows="empStatsRows"
+                            :columns="empStatsColumns"
+                            row-key="empId"
+                            :loading="empStatsLoading"
+                            dense
+                            flat
+                            :pagination="{ rowsPerPage: 10, sortBy: 'lastUsed', descending: true }"
+                        >
+                            <template v-slot:loading>
+                                <q-inner-loading showing color="teal" />
+                            </template>
+                            <template v-slot:body="props">
+                                <q-tr :props="props">
+                                    <!-- 工號 -->
+                                    <q-td key="empId" :props="props">
+                                        <q-icon name="badge" size="xs" color="teal" class="q-mr-xs" />
+                                        <strong>{{ props.row.empId }}</strong>
+                                    </q-td>
+                                    <!-- 使用次數 -->
+                                    <q-td key="count" :props="props" class="text-center">
+                                        <q-badge color="primary" :label="props.row.count + ' 次'" />
+                                    </q-td>
+                                    <!-- 最近使用時間 -->
+                                    <q-td key="lastUsed" :props="props" class="text-right">
+                                        {{ props.row.lastUsed ? new Date(props.row.lastUsed).toLocaleString() : '—' }}
+                                    </q-td>
+                                </q-tr>
+                            </template>
+                            <template v-slot:no-data>
+                                <div class="full-width text-center q-pa-md text-grey">
+                                    <q-icon name="info" size="1.5rem" />
+                                    <div>尚無工號統計資料，請先進行考試操作</div>
+                                </div>
+                            </template>
+                        </q-table>
+                    </q-card-section>
+                </q-card>
+            </div>
+        </div>
+
         <!-- 刪除確認對話框 -->
         <q-dialog v-model="deleteConfirmShow">
             <q-card>
@@ -186,8 +256,13 @@ const remoteLoading = ref(true);
 const localFilter = ref('');
 const remoteFilter = ref('');
 const isSyncing = ref(false);
+const isCleaningUp = ref(false);
 const syncStatus = ref('idle'); // 'idle', 'syncing', 'error', 'completed'
 const lastSyncTime = ref(null);
+
+/** 工號統計相關狀態 */
+const empStatsLoading = ref(false);
+const empStatsRows = ref([]);
 
 // 詳細視圖相關
 const detailDialogShow = ref(false);
@@ -407,6 +482,66 @@ const formatTopicData = topicsObj => {
     });
 };
 
+/** 工號統計表格欄位定義 */
+const empStatsColumns = [
+    {
+        name: 'empId',
+        required: true,
+        label: '工號',
+        align: 'left',
+        field: 'empId',
+        sortable: true,
+        style: 'width: 140px'
+    },
+    {
+        name: 'count',
+        align: 'center',
+        label: '使用次數',
+        field: 'count',
+        sortable: true,
+        style: 'width: 100px'
+    },
+    {
+        name: 'lastUsed',
+        align: 'right',
+        label: '最近使用時間',
+        field: 'lastUsed',
+        sortable: true,
+        style: 'width: 180px'
+    }
+];
+
+/**
+ * fetchEmpStats
+ * 從 background 取得工號使用統計，並格式化為表格列資料。
+ */
+const fetchEmpStats = async () => {
+    empStatsLoading.value = true;
+    try {
+        const response = await new Promise(resolve => {
+            chrome.runtime.sendMessage({ action: 'getEmpStats' }, result => {
+                if (chrome.runtime.lastError) {
+                    resolve({ stats: {} });
+                } else {
+                    resolve(result || { stats: {} });
+                }
+            });
+        });
+
+        const stats = response.stats || {};
+        empStatsRows.value = Object.entries(stats).map(([empId, data]) => ({
+            empId,
+            count: data.count || 0,
+            lastUsed: data.lastUsed || null
+        }));
+        console.log(`[Dashboard] 工號統計載入完成，共 ${empStatsRows.value.length} 個工號`);
+    } catch (err) {
+        console.error('[Dashboard] 工號統計載入失敗:', err);
+    } finally {
+        empStatsLoading.value = false;
+    }
+};
+
 // 監聽同步狀態更新
 let syncMessageListener = null;
 
@@ -432,6 +567,7 @@ const setupSyncMessageListener = () => {
                         // 重新獲取資料
                         fetchLocalData();
                         fetchRemoteData();
+                        fetchEmpStats();
                     }
                 }
                 // 確保返回true以表示處理了消息
@@ -494,7 +630,39 @@ const triggerSync = () => {
     });
 };
 
-// 延遲初始化功能以避免連接錯誤
+/**
+ * cleanupAnswers
+ * 呼叫 background 掃描並修正遠端 DB 中含有 \n\t 的舊版髒答案資料。
+ */
+const cleanupAnswers = () => {
+    isCleaningUp.value = true;
+    chrome.runtime.sendMessage({ action: 'cleanupAnswers' }, response => {
+        isCleaningUp.value = false;
+        if (chrome.runtime.lastError) {
+            $q.notify({ color: 'negative', message: '清理指令發送失敗', icon: 'error' });
+            return;
+        }
+        if (response && response.error) {
+            $q.notify({ color: 'negative', message: `清理失敗: ${response.error}`, icon: 'error' });
+            return;
+        }
+        const { fixed, totalQuestions, updatedDocs } = response;
+        if (fixed === 0) {
+            $q.notify({ color: 'positive', message: `掃描 ${totalQuestions} 題，資料乾淨無需清理 ✅`, icon: 'check_circle' });
+        } else {
+            $q.notify({
+                color: 'positive',
+                message: `清理完成！修正 ${fixed} 個答案，更新 ${updatedDocs} 份文件 ✅`,
+                icon: 'auto_fix_high',
+                timeout: 5000
+            });
+            // 清理後刷新遠端資料
+            fetchRemoteData();
+        }
+    });
+};
+
+
 const initExtension = () => {
     // 延遲更長時間以確保背景腳本完全加載
     setTimeout(() => {
@@ -513,6 +681,7 @@ const initExtension = () => {
             // 進一步延遲遠端數據獲取
             setTimeout(() => {
                 fetchRemoteData();
+                fetchEmpStats();
                 console.log('擴展初始化完成');
             }, 300);
         }, 300);

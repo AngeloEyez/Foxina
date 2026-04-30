@@ -99,6 +99,61 @@ let db = new PouchDB(_LOCALDB);
 let rdb = new PouchDB(_REMOTEDB);
 let lastSyncTime = null;
 
+// ─── 網路攔截：監聽 submitExam 請求以獲取工號 (userName) ──────────────────────
+chrome.webRequest.onBeforeRequest.addListener(
+    function (details) {
+        if (details.method === 'POST' && details.requestBody) {
+            try {
+                let userName = null;
+                // 嘗試從 formData 獲取 (如果是表單格式)
+                if (details.requestBody.formData) {
+                    if (details.requestBody.formData.userName) {
+                        userName = details.requestBody.formData.userName[0];
+                    }
+                }
+                // 嘗試從 raw 資料獲取 (如果是 JSON 格式)
+                else if (details.requestBody.raw) {
+                    const decoder = new TextDecoder('utf-8');
+                    const rawData = details.requestBody.raw
+                        .map(data => {
+                            if (data.bytes) return decoder.decode(data.bytes);
+                            return '';
+                        })
+                        .join('');
+
+                    // 嘗試解析 JSON 或簡單的 key=value
+                    if (rawData.includes('userName=')) {
+                        const match = rawData.match(/userName=([^&]+)/);
+                        if (match) userName = decodeURIComponent(match[1]);
+                    } else {
+                        try {
+                            const json = JSON.parse(rawData);
+                            if (json.userName) userName = json.userName;
+                        } catch (e) {}
+                    }
+                }
+
+                if (userName) {
+                    console.log(`[Background] 攔截到工號: ${userName}`);
+                    chrome.storage.local.get('foxinaOpt', items => {
+                        if (items.foxinaOpt) {
+                            let opt = JSON.parse(items.foxinaOpt);
+                            if (opt.user && opt.user.empId !== userName) {
+                                opt.user.empId = userName;
+                                chrome.storage.local.set({ foxinaOpt: JSON.stringify(opt) });
+                            }
+                        }
+                    });
+                }
+            } catch (err) {
+                console.error('[Background] 解析請求 Payload 失敗', err);
+            }
+        }
+    },
+    { urls: ['*://iedu.foxconn.com/*/submitExam*', '*://iedu.foxconn.com/*/submitExamTask*'] },
+    ['requestBody']
+);
+
 /** 執行鎖：防止 pushDB() 並行執行造成競爭條件 (Race Condition) */
 let isPushingDB = false;
 
@@ -159,6 +214,8 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             console.log(`[getAllLocalDocs] 獲取所有本地數據`);
             db.allDocs({ include_docs: true })
                 .then(function (result) {
+                    // 過濾掉 meta_ 開頭的內部管理文件，只回傳課程資料
+                    result.rows = result.rows.filter(r => !r.id.startsWith('meta_'));
                     sendResponse(result);
                 })
                 .catch(function (err) {
@@ -172,11 +229,39 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             console.log(`[getAllRemoteDocs] 獲取所有遠端數據`);
             rdb.allDocs({ include_docs: true })
                 .then(function (result) {
+                    // 過濾掉 meta_ 開頭的內部管理文件，只回傳課程資料
+                    result.rows = result.rows.filter(r => !r.id.startsWith('meta_'));
                     sendResponse(result);
                 })
                 .catch(function (err) {
                     console.log(err);
                     sendResponse({ error: err });
+                });
+            break;
+        }
+
+        /**
+         * 獲取工號使用統計資料
+         * 優先從遠端 DB 讀取，失敗則 fallback 至本地 DB
+         */
+        case 'getEmpStats': {
+            console.log('[getEmpStats] 獲取工號統計...');
+            rdb.get('meta_empStats')
+                .then(doc => {
+                    console.log('[getEmpStats] 從遠端取得工號統計');
+                    sendResponse({ stats: doc.stats || {} });
+                })
+                .catch(() => {
+                    // 遠端失敗，改查本地
+                    db.get('meta_empStats')
+                        .then(doc => {
+                            console.log('[getEmpStats] 從本地取得工號統計');
+                            sendResponse({ stats: doc.stats || {} });
+                        })
+                        .catch(() => {
+                            console.log('[getEmpStats] 尚無統計資料');
+                            sendResponse({ stats: {} });
+                        });
                 });
             break;
         }
@@ -237,6 +322,8 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                             .then(res => {
                                 console.log(`本地更新 ${cnt} 個資料成功: ${doc._id}`);
                                 pushDB();
+                                // 更新工號使用統計
+                                if (upd.creatorId) updateEmpStats(upd.creatorId);
                                 sendResponse({ msg: `本地更新 ${cnt} 個資料成功: ${doc._id}` });
                             })
                             .catch(err => {
@@ -246,12 +333,12 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                             });
                     } else {
                         console.log('本地資料不須更新');
+                        // 即使資料不須更新，也要更新工號使用統計（記錄此次查詢）
+                        if (upd.creatorId) updateEmpStats(upd.creatorId);
                         sendResponse({ msg: `本地資料不須更新: ${doc._id}` });
                     }
                 })
                 .catch(function (err) {
-                    //console.log("=====================")
-                    //console.log(err);
                     if (err.status == 404) {
                         console.log('本地未找到課程, 準備新增...');
 
@@ -261,6 +348,8 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                                 if (upd.Q != undefined) {
                                     pushDB();
                                 }
+                                // 更新工號使用統計
+                                if (upd.creatorId) updateEmpStats(upd.creatorId);
                                 sendResponse({ msg: `本地課程新增成功: ${upd._id}` });
                             })
                             .catch(err => {
@@ -320,6 +409,136 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                 });
             break;
         }
+
+        /**
+         * 在頁面的 MAIN World 中注入橋接函式，讀取 window.userName 後透過 postMessage 傳送。
+         * 使用 chrome.scripting.executeScript 取代 inline script，完全符合 MV3 CSP 規範。
+         * Content Script (ieduFillAns.js) 無法直接存取頁面的 window，須由此代為注入。
+         * @requires scripting 權限
+         */
+        case 'requestPageBridge': {
+            const tabId = sender?.tab?.id;
+            if (!tabId) {
+                console.warn('[requestPageBridge] 無法取得 tabId，跳過注入。');
+                sendResponse({ error: 'no tabId' });
+                break;
+            }
+
+            chrome.scripting.executeScript({
+                target: { tabId: tabId },
+                world: 'MAIN',
+                /**
+                 * 在 MAIN World 執行的函式：讀取頁面全域變數 window.userName
+                 * 並透過 postMessage 傳送至 ISOLATED World 的 Content Script。
+                 */
+                func: function () {
+                    const userName = window.userName || '';
+                    window.postMessage({ type: 'FOXINA_USER_INFO', userName: userName }, '*');
+                }
+            })
+                .then(() => {
+                    console.log('[requestPageBridge] MAIN World 注入成功。');
+                    sendResponse({ ok: true });
+                })
+                .catch(err => {
+                    console.error('[requestPageBridge] 注入失敗:', err);
+                    sendResponse({ error: String(err) });
+                });
+            break;
+        }
+
+
+
+        /**
+         * 清理 DB 中含有 \n\t 的髒答案資料（前綴未去除、空白未正規化）。
+         * 掃描遠端 DB 所有課程文件，對每個答案值執行 normalizeText + stripOptionPrefix，
+         * 若有修正則更新並回傳修正統計。
+         */
+        case 'cleanupAnswers': {
+            console.log('[cleanupAnswers] 開始掃描並清理髒答案資料...');
+
+            /**
+             * 正規化文字（與 ieduGetAns.js 邏輯保持同步）
+             * @param {string} text
+             * @returns {string}
+             */
+            function _normalizeText(text) {
+                return text.replace(/\s+/g, ' ').trim();
+            }
+
+            /**
+             * 去除選項前綴（如 "A："、"B: " 等）
+             * @param {string} text
+             * @returns {string}
+             */
+            function _stripOptionPrefix(text) {
+                const matchWithSpace = text.match(/^[A-Za-z]\uff1a\s|^[A-Za-z]:\s/);
+                if (matchWithSpace) return text.substring(matchWithSpace[0].length).trim();
+                const matchNoSpace = text.match(/^[A-Za-z][\uff1a:]/);
+                if (matchNoSpace) return text.substring(matchNoSpace[0].length).trim();
+                return text;
+            }
+
+            rdb.allDocs({ include_docs: true })
+                .then(function (result) {
+                    let totalFixed = 0;
+                    let totalQuestions = 0;
+                    const docsToUpdate = [];
+
+                    result.rows.forEach(row => {
+                        const doc = row.doc;
+                        // 跳過 meta_ 內部文件
+                        if (!doc || !doc.Q || doc._id.startsWith('meta_')) return;
+
+                        let docDirty = false;
+                        Object.entries(doc.Q).forEach(([qTitle, answers]) => {
+                            if (!Array.isArray(answers)) return;
+                            totalQuestions++;
+                            const cleaned = answers.map(a => _stripOptionPrefix(_normalizeText(a)));
+                            // 比較是否有變化
+                            if (JSON.stringify(cleaned) !== JSON.stringify(answers)) {
+                                doc.Q[qTitle] = cleaned;
+                                docDirty = true;
+                                totalFixed++;
+                                console.log(`[cleanupAnswers] 修正: "${doc._id}" → Q["${qTitle}"]`);
+                                console.log('  舊值:', JSON.stringify(answers));
+                                console.log('  新值:', JSON.stringify(cleaned));
+                            }
+                        });
+
+                        if (docDirty) docsToUpdate.push(doc);
+                    });
+
+                    if (docsToUpdate.length === 0) {
+                        console.log(`[cleanupAnswers] 掃描 ${totalQuestions} 題，無需清理。`);
+                        sendResponse({ fixed: 0, totalQuestions, updatedDocs: 0 });
+                        return;
+                    }
+
+                    // 批次更新遠端
+                    rdb.bulkDocs(docsToUpdate)
+                        .then(bulkRes => {
+                            const failures = bulkRes.filter(r => !r.ok);
+                            console.log(`[cleanupAnswers] 完成！修正 ${totalFixed} 個答案，更新 ${docsToUpdate.length} 份文件，失敗 ${failures.length} 份。`);
+                            sendResponse({
+                                fixed: totalFixed,
+                                totalQuestions,
+                                updatedDocs: docsToUpdate.length,
+                                failures: failures.length
+                            });
+                        })
+                        .catch(err => {
+                            console.error('[cleanupAnswers] bulkDocs 更新失敗:', err);
+                            sendResponse({ error: String(err) });
+                        });
+                })
+                .catch(function (err) {
+                    console.error('[cleanupAnswers] 讀取遠端 DB 失敗:', err);
+                    sendResponse({ error: String(err) });
+                });
+            break;
+        }
+
 
         default: {
             //var key = await getKey();
@@ -412,6 +631,11 @@ function mergeDoc(doc, upd) {
 
     if (upd.site != undefined && doc.site != upd.site) {
         doc.site = upd.site;
+        cnt++;
+    }
+
+    if (upd.creatorId != undefined && doc.creatorId != upd.creatorId) {
+        doc.creatorId = upd.creatorId;
         cnt++;
     }
 
@@ -624,6 +848,61 @@ function resetLocalDb() {
             console.error('[resetLocalDb] 摧毀本地 DB 失敗:', e);
             return Promise.reject(e);
         });
+}
+
+/**
+ * updateEmpStats
+ * 更新工號使用統計文件 (meta_empStats)。
+ * 每次呼叫時，指定工號的 count +1 並更新 lastUsed 時間戳。
+ * 統計文件同時寫入本地及遠端 DB。
+ * 注意：CouchDB 不允許自訂文件 ID 以底線開頭，故使用 meta_ 而非 _meta_。
+ * @param {string} empId - 使用者工號
+ * @returns {void}
+ */
+function updateEmpStats(empId) {
+    if (!empId) return;
+
+    console.log(`[updateEmpStats] 更新工號統計: ${empId}`);
+
+    const now = new Date().toISOString();
+
+    /**
+     * 執行統計更新的內部函式。
+     * 先讀取現有文件，更新後再寫回。
+     * @param {PouchDB.Database} targetDb - 要更新的資料庫實例 (本地或遠端)
+     * @param {string} dbName - 資料庫名稱，僅用於日誌輸出
+     * @returns {Promise<void>}
+     */
+    function doUpdate(targetDb, dbName) {
+        return targetDb.get('meta_empStats')
+            .then(doc => {
+                if (!doc.stats) doc.stats = {};
+                if (!doc.stats[empId]) {
+                    doc.stats[empId] = { count: 0, lastUsed: now };
+                }
+                doc.stats[empId].count++;
+                doc.stats[empId].lastUsed = now;
+                return targetDb.put(doc);
+            })
+            .catch(err => {
+                if (err.status === 404) {
+                    // 文件不存在，建立新的統計文件
+                    return targetDb.put({
+                        _id: 'meta_empStats',
+                        stats: {
+                            [empId]: { count: 1, lastUsed: now }
+                        }
+                    });
+                }
+                throw err;
+            })
+            .then(() => console.log(`[updateEmpStats] ${dbName} 統計已更新: ${empId}`))
+            .catch(e => console.error(`[updateEmpStats] ${dbName} 統計更新失敗:`, e));
+    }
+
+    // 同時更新本地與遠端
+    doUpdate(db, '本地');
+    doUpdate(rdb, '遠端');
 }
 
 // =============================================================================================================

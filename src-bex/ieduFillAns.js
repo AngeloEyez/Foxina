@@ -30,6 +30,38 @@ chrome.storage.onChanged.addListener(function (changes, namespace) {
     }
 });
 
+// ─── 監聽來自 MAIN World 的工號訊息（由 background requestPageBridge 注入） ────
+// background.js 會使用 chrome.scripting.executeScript 在 MAIN world 讀取
+// window.userName，再透過 postMessage 傳送至此 ISOLATED World Content Script。
+window.addEventListener('message', function (event) {
+    if (event.data.type === 'FOXINA_USER_INFO') {
+        const userName = event.data.userName;
+        if (userName) {
+            console.log(`[ieduFillAns] 從頁面獲取到工號: ${userName}`);
+            chrome.storage.local.get('foxinaOpt', items => {
+                if (items.foxinaOpt) {
+                    let opt = JSON.parse(items.foxinaOpt);
+                    if (opt.user && opt.user.empId !== userName) {
+                        opt.user.empId = userName;
+                        chrome.storage.local.set({ foxinaOpt: JSON.stringify(opt) });
+                    }
+                }
+            });
+        }
+    }
+});
+
+// 向 background 請求在 MAIN World 注入橋接函式以讀取 window.userName
+// 使用 chrome.scripting.executeScript，完全符合 MV3 CSP 規範，無需 unsafe-inline
+chrome.runtime.sendMessage({ action: 'requestPageBridge' }, response => {
+    if (chrome.runtime.lastError) {
+        console.warn('[ieduFillAns] requestPageBridge 失敗:', chrome.runtime.lastError.message);
+    } else {
+        console.log('[ieduFillAns] requestPageBridge 回應:', response);
+    }
+});
+
+
 // ─── 取得課程 ID 並寫入 DB ────────────────────────────────────────────────
 (async () => {
     // 在 async 內取得標題，確保 DOM 已載入
@@ -46,17 +78,57 @@ chrome.storage.onChanged.addListener(function (changes, namespace) {
         console.warn("[ieduFillAns] 無法取得 courseID，跳過課程 ID 寫入。");
     } else {
         console.log('[ieduFillAns] 取得 CourseID: ' + courseId + '，準備寫入 DB...');
+        
+        // 取得當前工號
+        let storage = await chrome.storage.local.get('foxinaOpt');
+        let creatorId = '';
+        if (storage.foxinaOpt) {
+            creatorId = JSON.parse(storage.foxinaOpt).user?.empId || '';
+        }
+
         const response = await chrome.runtime.sendMessage({
             action: 'putCourse',
             doc: {
                 _id: exam_title,
                 site: 'iedu',
-                courseId: courseId
+                courseId: courseId,
+                creatorId: creatorId
             }
         });
         console.log('[ieduFillAns] putCourse 回應:', response?.msg ?? response);
     }
 })();
+
+// ─── 文字處理輔助函式（與 ieduGetAns.js 保持同步）────────────────────────
+/**
+ * 正規化文字：將所有連續空白字元壓縮為單一空格並去頭尾空白。
+ * 用於相容 iedu 頁面內含 \n\t 的選項文字。
+ * @param {string} text - 待正規化的原始文字
+ * @returns {string} 正規化後的文字
+ */
+function normalizeText(text) {
+    return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * 去除選項前綴（如 "A："、"B: " 等），回傳純選項內容。
+ * 支援全形/半形冒號、有無空格等各種變體。
+ * @param {string} text - 已正規化的選項文字
+ * @returns {string} 去除前綴後的選項內容
+ */
+function stripOptionPrefix(text) {
+    // 匹配 "X： " 或 "X: "（冒號後有空格）
+    const matchWithSpace = text.match(/^[A-Za-z]\uff1a\s|^[A-Za-z]:\s/);
+    if (matchWithSpace) {
+        return text.substring(matchWithSpace[0].length).trim();
+    }
+    // 匹配 "X：" 或 "X:"（冒號後無空格）
+    const matchNoSpace = text.match(/^[A-Za-z][\uff1a:]/);
+    if (matchNoSpace) {
+        return text.substring(matchNoSpace[0].length).trim();
+    }
+    return text;
+}
 
 // ─── 自動填答主流程 ───────────────────────────────────────────────────────
 (async () => {
@@ -111,23 +183,46 @@ chrome.storage.onChanged.addListener(function (changes, namespace) {
                 let answers = COURSE.Q[qTitle];
                 console.log(`[ieduFillAns] [fillAns] 第 ${id + 1} 題填答: "${qTitle}" → ${JSON.stringify(answers)}`);
 
-                // 是非題（答案只有一個且為「正确」/「错误」）
-                if (answers.length == 1) {
-                    if (answers[0] == '正确') {
-                        setTimeout(() => $(this).find('input[value=1]')[0].click(), 100);
-                    } else if (answers[0] == '错误') {
-                        setTimeout(() => $(this).find('input[value=0]')[0].click(), 100);
-                    }
+                // ─── 是非題（答案為「正确」/「错误」，直接找對應 value 的 input） ───
+                // 判斷是否為是非題：答案只有一個且為 正确/错误
+                const judgmentVals = { '正确': '1', '错误': '0' };
+                if (answers.length === 1 && judgmentVals[answers[0]] !== undefined) {
+                    const inputVal = judgmentVals[answers[0]];
+                    setTimeout(() => {
+                        const $input = $(this).find(`input[value="${inputVal}"]`);
+                        if ($input.length > 0) {
+                            $input[0].click();
+                        } else {
+                            console.warn(`[ieduFillAns] [fillAns] ⚠️ 找不到是非題 input[value=${inputVal}]`);
+                        }
+                    }, 100);
+                    // 是非題處理完畢，不繼續執行選擇題邏輯
+                    filledCount++;
+                    return;
                 }
 
-                // 選擇題（比對選項文字後點擊）
+                // ─── 選擇題（比對選項文字後直接點擊 input 元素） ─────────────────
+                // 【修正】對 DB 中的答案値也做正規化，相容舊版含 \n\t 的髒資料
+                const normalizedAnswers = answers.map(a => stripOptionPrefix(normalizeText(a)));
+                let clickDelay = 100;
                 $(this)
                     .find('input')
-                    .each(function (i, v) {
-                        let optText = $(this).parent()[0].innerText;
-                        optText = optText.substring(optText.indexOf('： ', 0) + 2).trim();
-                        if (answers.includes(optText)) {
-                            setTimeout(() => $(this).parent()[0].click(), 100);
+                    .each(function () {
+                        let $input = $(this);
+                        let $parent = $input.parent();
+                        if ($parent.length === 0) return;
+
+                        // 【修正】先正規化空白，再去前綴，與 ieduGetAns.js 保持同步
+                        let optText = normalizeText($parent.text());
+                        optText = stripOptionPrefix(optText);
+
+                        if (normalizedAnswers.includes(optText)) {
+                            // 遞增延遲，防止多選題同時點擊產生競態
+                            const delay = clickDelay;
+                            setTimeout(() => {
+                                $input[0].click();
+                            }, delay);
+                            clickDelay += 50;
                         }
                     });
 

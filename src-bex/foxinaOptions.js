@@ -10,6 +10,9 @@ export const defaultOptions = {
     elearning: {
         fillAns: false
     },
+    user: {
+        empId: ''
+    },
     sys: {
         version: version,
         showWhatsNew: 2 // 0不顯示，設定為2則顯示兩次，每顯示一次扣1
@@ -37,6 +40,11 @@ export async function getOptions() {
 
     if (!opt.sys) {
         opt.sys = JSON.parse(JSON.stringify(defaultOptions.sys));
+        saveFlg = true;
+    }
+
+    if (!opt.user) {
+        opt.user = JSON.parse(JSON.stringify(defaultOptions.user));
         saveFlg = true;
     }
 
