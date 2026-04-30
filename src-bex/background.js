@@ -544,6 +544,88 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         }
 
 
+        /**
+         * Google OAuth 驗證：透過 launchWebAuthFlow 取得使用者身分
+         * 使用 launchWebAuthFlow 而非 getAuthToken，因為：
+         * 1. getAuthToken 要求 OAuth Client 類型為「Chrome 應用程式」且 Extension ID 必須完全匹配
+         * 2. 開發中的 unpacked extension 的 ID 會隨載入路徑改變，導致 "Invalid credentials" 錯誤
+         * 3. launchWebAuthFlow 支援標準的 Web Application OAuth Client，更穩定可靠
+         * @param {boolean} request.interactive - 是否彈出互動式登入視窗
+         */
+        case 'googleAuthGetToken': {
+            const interactive = !!request.interactive;
+            console.log(`[googleAuthGetToken] interactive=${interactive}`);
+
+            const CLIENT_ID = '933795041427-p1oicdlnr7hgsgmjjij1up60700mmdo4.apps.googleusercontent.com';
+            const REDIRECT_URL = chrome.identity.getRedirectURL();
+            const SCOPES = 'email profile';
+
+            console.log('[googleAuthGetToken] redirectURL:', REDIRECT_URL);
+
+            // 組裝 Google OAuth 授權 URL (Implicit Grant Flow)
+            const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+            authUrl.searchParams.set('client_id', CLIENT_ID);
+            authUrl.searchParams.set('redirect_uri', REDIRECT_URL);
+            authUrl.searchParams.set('response_type', 'token');
+            authUrl.searchParams.set('scope', SCOPES);
+            // 加入 prompt 參數，確保使用者可以選擇帳號
+            if (interactive) {
+                authUrl.searchParams.set('prompt', 'select_account');
+            }
+
+            (async () => {
+                try {
+                    const responseUrl = await chrome.identity.launchWebAuthFlow({
+                        url: authUrl.toString(),
+                        interactive
+                    });
+
+                    console.log('[googleAuthGetToken] 收到回應 URL');
+
+                    // 從回應 URL 的 hash fragment 中解析 access_token
+                    const hashParams = new URLSearchParams(new URL(responseUrl).hash.substring(1));
+                    const token = hashParams.get('access_token');
+
+                    if (!token) {
+                        console.error('[googleAuthGetToken] 回應中無 access_token');
+                        sendResponse({ error: '授權回應中無法取得 Token' });
+                        return;
+                    }
+
+                    console.log('[googleAuthGetToken] 成功取得 access_token');
+
+                    // 用 token 向 Google 查詢使用者資訊 (Service Worker 中 fetch 不受 CSP 限制)
+                    const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
+                    const userInfo = await userInfoRes.json();
+
+                    if (userInfo && userInfo.email) {
+                        console.log('[googleAuthGetToken] Email:', userInfo.email);
+                        sendResponse({ token, email: userInfo.email });
+                    } else {
+                        console.error('[googleAuthGetToken] 無法取得 Email:', userInfo);
+                        sendResponse({ token, email: null, error: '無法從 Google 取得 Email' });
+                    }
+                } catch (err) {
+                    console.error('[googleAuthGetToken] 失敗:', err);
+                    sendResponse({ error: String(err.message || err) });
+                }
+            })();
+            break;
+        }
+
+        /**
+         * Google OAuth 驗證：查詢 launchWebAuthFlow 的 Redirect URL
+         * 使用者需要將此 URL 加入 Google Cloud Console 的「授權重新導向 URI」中
+         */
+        case 'googleAuthGetRedirectURL': {
+            const redirectUrl = chrome.identity.getRedirectURL();
+            console.log('[googleAuthGetRedirectURL]', redirectUrl);
+            sendResponse({ redirectUrl });
+            break;
+        }
+
         default: {
             //var key = await getKey();
             break;

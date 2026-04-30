@@ -1,8 +1,17 @@
 <template>
     <q-page class="q-pa-md">
-        <div class="text-h5 q-mb-md">Foxina Dashboard</div>
+        <!-- Dashboard 主要內容 (永遠存在 DOM 中，用對話框覆蓋) -->
+        <div class="full-width" v-show="isAuthenticated">
+            <div class="row items-center q-mb-md">
+                <div class="text-h5">Foxina Dashboard</div>
+                <q-badge color="positive" class="q-ml-sm" rounded>管理員: {{ userEmail }}</q-badge>
+                <q-space />
+                <q-btn flat round dense icon="logout" color="grey-7" @click="logout">
+                    <q-tooltip>登出並清除授權</q-tooltip>
+                </q-btn>
+            </div>
 
-        <!-- 同步狀態和按鈕 -->
+            <!-- 同步狀態和按鈕 -->
         <div class="row q-mb-md items-center">
             <div class="col">
                 <div class="text-subtitle1">
@@ -253,14 +262,62 @@
                 </q-card-section>
             </q-card>
         </q-dialog>
+        </div>
+
+        <!-- 登入卡片 (使用全螢幕對話框強制覆蓋) -->
+        <q-dialog :model-value="!isAuthenticated && !isAuthLoading" persistent maximized transition-show="fade" transition-hide="fade">
+            <div class="full-width full-height flex flex-center bg-white">
+                <q-card class="my-card text-center shadow-10" style="min-width: 400px; border-radius: 12px; overflow: hidden;">
+                    <q-card-section class="bg-primary text-white q-py-lg">
+                        <div class="text-h5 font-weight-bold">Foxina 管理後台</div>
+                    </q-card-section>
+                    <q-card-section class="q-pa-xl">
+                        <q-icon name="admin_panel_settings" size="80px" color="primary" class="q-mb-md" />
+                        <div class="text-h6 q-mb-xs">存取受限</div>
+                        <div class="text-body1 text-grey-8 q-mb-lg">此頁面包含敏感資料，僅限系統管理員存取。</div>
+                        
+                        <q-banner v-if="authError" inline-actions class="text-white bg-negative rounded-borders q-mb-lg shadow-2">
+                            <template v-slot:avatar>
+                                <q-icon name="error" color="white" />
+                            </template>
+                            {{ authError }}
+                        </q-banner>
+                        
+                        <q-btn 
+                            color="primary" 
+                            icon="login" 
+                            label="使用 Google 帳號登入" 
+                            @click="loginWithGoogle" 
+                            size="lg"
+                            class="full-width shadow-4"
+                            rounded
+                        />
+                    </q-card-section>
+                </q-card>
+            </div>
+        </q-dialog>
+
+        <!-- Loading 狀態遮罩 -->
+        <q-inner-loading :showing="isAuthLoading" label="驗證身分中..." label-class="text-primary text-h6" label-style="font-size: 1.2em" />
     </q-page>
 </template>
 
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 
 const $q = useQuasar();
+const router = useRouter();
+
+// --- 認證相關狀態 ---
+const isAuthenticated = ref(false);
+const isAuthLoading = ref(true);
+const authError = ref(null);
+const userEmail = ref('');
+let currentToken = null; // 儲存目前的 OAuth access token
+const ALLOWED_EMAIL = 'gavenhuang@gmail.com';
+
 const localData = ref([]);
 const remoteData = ref([]);
 const localLoading = ref(true);
@@ -729,8 +786,9 @@ const fetchLocalData = async () => {
             try {
                 chrome.runtime.sendMessage({ action: 'getAllLocalDocs' }, result => {
                     if (chrome.runtime.lastError) {
-                        console.error('獲取本地資料時發生錯誤:', chrome.runtime.lastError);
-                        resolve({ error: chrome.runtime.lastError });
+                        const errMsg = chrome.runtime.lastError.message || '未知錯誤';
+                        console.error('獲取本地資料時發生錯誤:', errMsg);
+                        resolve({ error: errMsg });
                     } else {
                         resolve(result || { rows: [] });
                     }
@@ -765,8 +823,9 @@ const fetchRemoteData = async () => {
             try {
                 chrome.runtime.sendMessage({ action: 'getAllRemoteDocs' }, result => {
                     if (chrome.runtime.lastError) {
-                        console.error('獲取遠端資料時發生錯誤:', chrome.runtime.lastError);
-                        resolve({ error: chrome.runtime.lastError });
+                        const errMsg = chrome.runtime.lastError.message || '未知錯誤';
+                        console.error('獲取遠端資料時發生錯誤:', errMsg);
+                        resolve({ error: errMsg });
                     } else {
                         resolve(result || { rows: [] });
                     }
@@ -800,8 +859,9 @@ const fetchLastSyncTime = async () => {
             try {
                 chrome.runtime.sendMessage({ action: 'getLastSyncTime' }, result => {
                     if (chrome.runtime.lastError) {
-                        console.error('獲取同步時間時發生錯誤:', chrome.runtime.lastError);
-                        resolve({ error: chrome.runtime.lastError });
+                        const errMsg = chrome.runtime.lastError.message || '未知錯誤';
+                        console.error('獲取同步時間時發生錯誤:', errMsg);
+                        resolve({ error: errMsg });
                     } else {
                         resolve(result || {});
                     }
@@ -823,8 +883,99 @@ const fetchLastSyncTime = async () => {
     }
 };
 
+/**
+ * 檢查與執行 Google 登入驗證
+ * 透過 chrome.runtime.sendMessage 委託 background.js (Service Worker) 執行
+ * 因為 Quasar BEX 的 iframe 隔離機制，chrome.identity 的 callback 在前端頁面會遺失
+ * 但 chrome.runtime.sendMessage 已由 Quasar bridge 正確轉發，因此透過它間接呼叫
+ * @param {boolean} interactive - 是否彈出互動式登入視窗
+ */
+const checkAuth = (interactive = false) => {
+    isAuthLoading.value = true;
+    authError.value = null;
+    console.log(`[Dashboard checkAuth] interactive=${interactive}`);
+
+    chrome.runtime.sendMessage(
+        { action: 'googleAuthGetToken', interactive },
+        (response) => {
+            if (chrome.runtime.lastError) {
+                const errMsg = chrome.runtime.lastError.message || '通訊失敗';
+                console.error('[Dashboard checkAuth] sendMessage 失敗:', errMsg);
+                isAuthLoading.value = false;
+                authError.value = `背景服務通訊失敗：${errMsg}`;
+                return;
+            }
+
+            console.log('[Dashboard checkAuth] 收到 background 回應:', response);
+
+            if (!response || response.error) {
+                // 驗證失敗
+                isAuthenticated.value = false;
+                isAuthLoading.value = false;
+
+                if (interactive) {
+                    const errMsg = response ? response.error : '未知錯誤';
+                    console.error('[Dashboard checkAuth] 互動登入失敗:', errMsg);
+                    authError.value = `登入失敗：${errMsg}`;
+                } else {
+                    console.log('[Dashboard checkAuth] 安靜驗證失敗，顯示登入畫面');
+                }
+                return;
+            }
+
+            // 驗證成功，檢查 Email
+            const email = response.email;
+            console.log('[Dashboard checkAuth] 取得 Email:', email);
+
+            if (email === ALLOWED_EMAIL) {
+                userEmail.value = email;
+                currentToken = response.token;
+                isAuthenticated.value = true;
+                isAuthLoading.value = false;
+                console.log('[Dashboard checkAuth] 驗證通過，初始化擴充功能...');
+                initExtension();
+            } else {
+                console.warn('[Dashboard checkAuth] 非授權帳號:', email);
+                // 帳號不符，撤銷 token
+                chrome.runtime.sendMessage(
+                    { action: 'googleAuthRevokeToken', token: response.token },
+                    () => {
+                        isAuthenticated.value = false;
+                        isAuthLoading.value = false;
+                        if (interactive) {
+                            $q.notify({ color: 'negative', message: `拒絕存取：${email} 非授權管理員帳號` });
+                            router.push('/');
+                        } else {
+                            authError.value = `拒絕存取：${email} 非授權管理員帳號`;
+                        }
+                    }
+                );
+            }
+        }
+    );
+};
+
+const loginWithGoogle = () => {
+    checkAuth(true);
+};
+
+/**
+ * 登出並清除授權
+ * launchWebAuthFlow 不像 getAuthToken 有本地快取 token 機制
+ * 因此只需清除前端狀態並跳轉回首頁即可
+ */
+const logout = () => {
+    isAuthenticated.value = false;
+    userEmail.value = '';
+    currentToken = null;
+    $q.notify({ color: 'info', message: '已安全登出' });
+    router.push('/');
+};
+
 onMounted(() => {
-    initExtension();
+    // 進入頁面時先嘗試安靜登入 (interactive: false)
+    // 避免因無 User Gesture (使用者點擊) 而被 Chrome 瀏覽器直接阻擋並卡死
+    checkAuth(false);
 });
 </script>
 
