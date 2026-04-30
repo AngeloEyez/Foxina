@@ -269,12 +269,12 @@
             <div class="full-width full-height flex flex-center bg-white">
                 <q-card class="my-card text-center shadow-10" style="min-width: 400px; border-radius: 12px; overflow: hidden;">
                     <q-card-section class="bg-primary text-white q-py-lg">
-                        <div class="text-h5 font-weight-bold">Foxina 管理後台</div>
+                        <div class="text-h5 font-weight-bold">未授權頁面</div>
                     </q-card-section>
                     <q-card-section class="q-pa-xl">
                         <q-icon name="admin_panel_settings" size="80px" color="primary" class="q-mb-md" />
                         <div class="text-h6 q-mb-xs">存取受限</div>
-                        <div class="text-body1 text-grey-8 q-mb-lg">此頁面包含敏感資料，僅限系統管理員存取。</div>
+                        <div class="text-body1 text-grey-8 q-mb-lg">開發中功能...</div>
                         
                         <q-banner v-if="authError" inline-actions class="text-white bg-negative rounded-borders q-mb-lg shadow-2">
                             <template v-slot:avatar>
@@ -890,7 +890,7 @@ const fetchLastSyncTime = async () => {
  * 但 chrome.runtime.sendMessage 已由 Quasar bridge 正確轉發，因此透過它間接呼叫
  * @param {boolean} interactive - 是否彈出互動式登入視窗
  */
-const checkAuth = (interactive = false) => {
+const checkAuth = (interactive = false, autoFallback = false) => {
     isAuthLoading.value = true;
     authError.value = null;
     console.log(`[Dashboard checkAuth] interactive=${interactive}`);
@@ -911,14 +911,22 @@ const checkAuth = (interactive = false) => {
             if (!response || response.error) {
                 // 驗證失敗
                 isAuthenticated.value = false;
-                isAuthLoading.value = false;
 
                 if (interactive) {
+                    isAuthLoading.value = false;
                     const errMsg = response ? response.error : '未知錯誤';
                     console.error('[Dashboard checkAuth] 互動登入失敗:', errMsg);
                     authError.value = `登入失敗：${errMsg}`;
                 } else {
-                    console.log('[Dashboard checkAuth] 安靜驗證失敗，顯示登入畫面');
+                    console.log('[Dashboard checkAuth] 安靜驗證失敗');
+                    if (autoFallback) {
+                        console.log('[Dashboard checkAuth] 自動觸發互動式登入彈窗...');
+                        // 安靜驗證失敗，自動觸發互動式驗證 (不改 isAuthLoading 讓畫面保持 loading)
+                        checkAuth(true, false);
+                    } else {
+                        isAuthLoading.value = false;
+                        console.log('[Dashboard checkAuth] 顯示登入畫面');
+                    }
                 }
                 return;
             }
@@ -961,21 +969,34 @@ const loginWithGoogle = () => {
 
 /**
  * 登出並清除授權
- * launchWebAuthFlow 不像 getAuthToken 有本地快取 token 機制
- * 因此只需清除前端狀態並跳轉回首頁即可
+ * 通知 background.js 向 Google 發送撤銷 token 的請求
+ * 這樣下次進入頁面時就不會被自動登入
  */
 const logout = () => {
-    isAuthenticated.value = false;
-    userEmail.value = '';
-    currentToken = null;
-    $q.notify({ color: 'info', message: '已安全登出' });
-    router.push('/');
+    if (currentToken) {
+        chrome.runtime.sendMessage(
+            { action: 'googleAuthRevokeToken', token: currentToken },
+            () => {
+                isAuthenticated.value = false;
+                userEmail.value = '';
+                currentToken = null;
+                $q.notify({ color: 'info', message: '已安全登出並撤銷授權' });
+                router.push('/');
+            }
+        );
+    } else {
+        isAuthenticated.value = false;
+        userEmail.value = '';
+        $q.notify({ color: 'info', message: '已登出' });
+        router.push('/');
+    }
 };
 
 onMounted(() => {
     // 進入頁面時先嘗試安靜登入 (interactive: false)
-    // 避免因無 User Gesture (使用者點擊) 而被 Chrome 瀏覽器直接阻擋並卡死
-    checkAuth(false);
+    // 如果安靜登入失敗，自動嘗試互動式登入 (autoFallback: true)
+    // 如此可省去使用者點擊登入按鈕的步驟
+    checkAuth(false, true);
 });
 </script>
 

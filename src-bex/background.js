@@ -626,6 +626,44 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             break;
         }
 
+        /**
+         * Google OAuth 驗證：撤銷 Auth Token
+         * 向 Google 的 revoke endpoint 發送請求以撤銷使用者的授權
+         * 這樣下次登入時才會強制要求重新選擇帳號與授權
+         * @param {string} request.token - 要撤銷的 access token
+         */
+        case 'googleAuthRevokeToken': {
+            const tokenToRevoke = request.token;
+            console.log('[googleAuthRevokeToken] 撤銷 token...');
+            if (tokenToRevoke) {
+                (async () => {
+                    try {
+                        const revokeUrl = `https://oauth2.googleapis.com/revoke?token=${tokenToRevoke}`;
+                        const response = await fetch(revokeUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-type': 'application/x-www-form-urlencoded'
+                            }
+                        });
+                        
+                        if (response.ok) {
+                            console.log('[googleAuthRevokeToken] Token 已成功從 Google 撤銷');
+                            sendResponse({ success: true });
+                        } else {
+                            console.error('[googleAuthRevokeToken] 撤銷失敗:', response.status);
+                            sendResponse({ error: '撤銷失敗，HTTP ' + response.status });
+                        }
+                    } catch (err) {
+                        console.error('[googleAuthRevokeToken] 發生錯誤:', err);
+                        sendResponse({ error: String(err) });
+                    }
+                })();
+            } else {
+                sendResponse({ error: '未提供 token' });
+            }
+            break;
+        }
+
         default: {
             //var key = await getKey();
             break;
