@@ -1,35 +1,35 @@
-{
-    "name": "foxina",
-    "version": "2.7",
-    "description": "Foxina : 狐狸小幫手",
-    "productName": "Foxina",
-    "author": "AngelEyez <40155392+AngeloEyez@users.noreply.github.com>",
-    "private": true,
-    "scripts": {
-        "lint": "eslint --ext .js,.vue ./",
-        "format": "prettier --write \"**/*.{js,vue,scss,html,md,json}\" --ignore-path .gitignore",
-        "test": "echo \"No test specified\" && exit 0"
-    },
-    "dependencies": {
-        "@quasar/extras": "^1.16.5",
-        "crypto-js": "^4.1.1",
-        "events": "^3.3.0",
-        "quasar": "^2.6.0",
-        "vue": "^3.3.4",
-        "vue-router": "^4.0.0"
-    },
-    "devDependencies": {
-        "@quasar/app-vite": "^1.0.0",
-        "autoprefixer": "^10.4.2",
-        "eslint": "^8.10.0",
-        "eslint-config-prettier": "^8.1.0",
-        "eslint-plugin-vue": "^9.0.0",
-        "postcss": "^8.4.14",
-        "prettier": "^2.5.1"
-    },
-    "engines": {
-        "node": "^18 || ^16 || ^14.19",
-        "npm": ">= 6.13.4",
-        "yarn": ">= 1.21.1"
-    }
+﻿{
+    "name":  "foxina",
+    "version":  "2.7",
+    "description":  "Foxina : ç‹ç‹¸å°å¹«æ‰‹",
+    "productName":  "Foxina",
+    "author":  "AngelEyez \u003c40155392+AngeloEyez@users.noreply.github.com\u003e",
+    "private":  true,
+    "scripts":  {
+                    "lint":  "eslint --ext .js,.vue ./",
+                    "format":  "prettier --write \"**/*.{js,vue,scss,html,md,json}\" --ignore-path .gitignore",
+                    "test":  "echo \"No test specified\" \u0026\u0026 exit 0"
+                },
+    "dependencies":  {
+                         "@quasar/extras":  "^1.16.5",
+                         "crypto-js":  "^4.1.1",
+                         "events":  "^3.3.0",
+                         "quasar":  "^2.6.0",
+                         "vue":  "^3.3.4",
+                         "vue-router":  "^4.0.0"
+                     },
+    "devDependencies":  {
+                            "@quasar/app-vite":  "^1.0.0",
+                            "autoprefixer":  "^10.4.2",
+                            "eslint":  "^8.10.0",
+                            "eslint-config-prettier":  "^8.1.0",
+                            "eslint-plugin-vue":  "^9.0.0",
+                            "postcss":  "^8.4.14",
+                            "prettier":  "^2.5.1"
+                        },
+    "engines":  {
+                    "node":  "^18 || ^16 || ^14.19",
+                    "npm":  "\u003e= 6.13.4",
+                    "yarn":  "\u003e= 1.21.1"
+                }
 }
