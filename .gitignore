@@ -30,6 +30,11 @@ yarn-error.log*
 *.sln
 
 # Foxina
+# 原始碼目錄：僅在 localDev 分支追蹤，main 分支不推送至 GitHub
+public
+src
+src-bex
+docs
 *.pem
 *.pptx
 *.ppt
