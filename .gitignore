@@ -39,3 +39,6 @@ docs
 *.pptx
 *.ppt
 *.7z
+*.js
+*.bat
+*.ps1
