@@ -38,7 +38,7 @@ docs
 *.pem
 *.pptx
 *.ppt
-*.7z
+/dist/*.7z
 *.js
 *.bat
 *.ps1
