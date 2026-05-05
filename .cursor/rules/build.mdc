@@ -1,7 +1,0 @@
----
-description: 
-globs: 
-alwaysApply: true
----
-use following command to build and retry if has error:
-quasar dev -m bex
